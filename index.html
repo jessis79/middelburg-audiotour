@@ -1,128 +1,15 @@
 <!doctype html>
-<html lang="nl">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f172a"><title>Middelburg Audiotour</title>
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f4f5f7;color:#111827}
-header{padding:12px 14px;background:#0f172a;color:white}.top{display:flex;align-items:center;justify-content:space-between;gap:10px}
-h1{font-size:1.15rem;margin:0}.pill{background:#334155;padding:6px 9px;border-radius:999px;font-size:.82rem}
-#map{height:46vh;min-height:330px;width:100%;background:#ddd}.panel{padding:12px;max-width:850px;margin:auto}
-.next{background:white;border-radius:16px;padding:15px;box-shadow:0 2px 10px #0001;margin-top:-28px;position:relative;z-index:500}
-.eyebrow{text-transform:uppercase;letter-spacing:.06em;font-size:.72rem;color:#64748b;font-weight:700}
-.next h2{margin:4px 0 8px;font-size:1.35rem}.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.metric{background:#f1f5f9;border-radius:10px;padding:9px}.metric b{display:block;font-size:1rem}.metric span{font-size:.72rem;color:#64748b}
-.progress{height:8px;background:#e2e8f0;border-radius:999px;overflow:hidden;margin:12px 0}.bar{height:100%;background:#0f172a;width:0}
-.notice{margin:10px 0;padding:12px;border-radius:12px;background:#fff7ed;display:none}
-button{border:0;border-radius:11px;padding:12px 14px;font-size:1rem;font-weight:650;background:#0f172a;color:white}
-button.secondary{background:#e2e8f0;color:#111827}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.status{font-size:.85rem;color:#475569;margin-top:8px}.practical{margin-top:12px;background:#ecfdf5;border-radius:12px;padding:12px;display:none}
-.list{margin-top:14px}.stop{background:white;border-radius:12px;padding:12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:12px}
-.stop.done{opacity:.55}.stop small{color:#64748b}.num{width:30px;height:30px;border-radius:50%;background:#e2e8f0;display:grid;place-items:center;font-weight:700;flex:0 0 auto}
-.stop-left{display:flex;align-items:center;gap:10px;min-width:0}.stop button{padding:8px 10px;font-size:.85rem}
-</style>
-</head>
-<body>
-<header><div class="top"><h1>Middelburg Audiotour</h1><div class="pill" id="progressTop">0 / 12</div></div></header>
-<div id="map"></div>
-<main class="panel">
-<section class="next">
-<div class="eyebrow">Volgende stop</div><h2 id="nextName">Start de tour</h2>
-<div class="metrics">
-<div class="metric"><b id="distance">—</b><span>afstand</span></div>
-<div class="metric"><b id="walkTime">—</b><span>looptijd</span></div>
-<div class="metric"><b id="accuracy">—</b><span>GPS</span></div>
-</div>
-<div class="progress"><div class="bar" id="bar"></div></div>
-<div id="arrival" class="notice"><b id="arrivalTitle">Je bent bij een stop</b><div style="margin-top:4px">Tik op Voorlezen als de groep klaar is om te luisteren.</div></div>
-<div id="practical" class="practical"></div>
-<div class="actions">
-<button id="startBtn">Start tour</button>
-<button id="playBtn" style="display:none">▶ Voorlezen</button>
-<button id="stopSpeak" class="secondary">Stop audio</button>
-<button id="resetBtn" class="secondary">Reset</button>
-</div>
-<div class="status" id="status">GPS staat uit. Sta locatiegebruik toe wanneer je de tour start.</div>
-</section>
-<section class="list" id="list"></section>
-</main>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="stops.js"></script>
-<script>
-const TRIGGER=60, WALK_MPS=1.15;
-let watchId=null, position=null, currentStop=null, notified=new Set(JSON.parse(localStorage.getItem("notified")||"[]"));
-let completed=new Set(JSON.parse(localStorage.getItem("completed")||"[]"));
-let audioCtx=null, userMarker=null, accuracyCircle=null;
-
-const map=L.map("map",{zoomControl:true}).setView([51.5000,3.6150],15);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
-L.polyline(ROUTE,{weight:5,opacity:.72}).addTo(map);
-STOPS.forEach(s=>L.marker([s.lat,s.lon]).addTo(map).bindTooltip(`${s.id}. ${s.name}`));
-map.fitBounds(L.latLngBounds(ROUTE).pad(.12));
-
-function dist(a,b,c,d){const R=6371000,p1=a*Math.PI/180,p2=c*Math.PI/180,dp=(c-a)*Math.PI/180,dl=(d-b)*Math.PI/180,q=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}
-function fmtDist(m){return m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(1)} km`}
-function fmtTime(m){const min=Math.max(1,Math.round(m/WALK_MPS/60));return `± ${min} min`}
-function save(){localStorage.setItem("notified",JSON.stringify([...notified]));localStorage.setItem("completed",JSON.stringify([...completed]))}
-function nextUncompleted(){return STOPS.find(s=>!completed.has(s.id))||STOPS[STOPS.length-1]}
-function beep(){
-  try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.18)}catch(e){}
-  if(navigator.vibrate) navigator.vibrate([180,90,180]);
-}
-function speak(stop){
-  if(!("speechSynthesis" in window)){alert("Voorlezen wordt niet ondersteund op deze browser.");return}
-  speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(stop.text);u.lang="nl-NL";u.rate=.94;
-  u.onend=()=>{completed.add(stop.id);save();document.getElementById("arrival").style.display="none";showPractical(stop.id);render()};
-  speechSynthesis.speak(u);
-}
-function showPractical(afterId){
- const p=PRACTICAL.find(x=>x.after===afterId),el=document.getElementById("practical");
- if(!p){el.style.display="none";return}
- el.innerHTML=`<b>${p.type}: ${p.title}</b><div style="margin-top:4px">${p.text}</div>`;el.style.display="block";
-}
-function updatePosition(pos){
- position=pos.coords;
- if(userMarker)map.removeLayer(userMarker); if(accuracyCircle)map.removeLayer(accuracyCircle);
- userMarker=L.circleMarker([position.latitude,position.longitude],{radius:8,weight:3}).addTo(map).bindTooltip("Jij bent hier");
- accuracyCircle=L.circle([position.latitude,position.longitude],{radius:position.accuracy,weight:1,opacity:.3,fillOpacity:.05}).addTo(map);
- const next=nextUncompleted(); currentStop=next;
- const d=dist(position.latitude,position.longitude,next.lat,next.lon);
- document.getElementById("nextName").textContent=`${next.id}. ${next.name}`;
- document.getElementById("distance").textContent=fmtDist(d);
- document.getElementById("walkTime").textContent=fmtTime(d);
- document.getElementById("accuracy").textContent=`± ${Math.round(position.accuracy)} m`;
- document.getElementById("status").textContent="GPS actief. Je krijgt eerst een geluid en trilling wanneer je bij de volgende stop bent.";
- if(d<=TRIGGER && !notified.has(next.id)){
-   notified.add(next.id); save(); beep();
-   document.getElementById("arrivalTitle").textContent=`Je bent bij stop ${next.id}: ${next.name}`;
-   document.getElementById("arrival").style.display="block";
-   document.getElementById("playBtn").style.display="inline-block";
- }
- render();
-}
-function render(){
- const done=completed.size, pct=Math.min(100,done/STOPS.length*100);
- document.getElementById("bar").style.width=pct+"%";document.getElementById("progressTop").textContent=`${done} / ${STOPS.length}`;
- const next=nextUncompleted(); if(!position){document.getElementById("nextName").textContent=done===STOPS.length?"Tour voltooid":`${next.id}. ${next.name}`;}
- const list=document.getElementById("list");list.innerHTML="";
- STOPS.forEach(s=>{const el=document.createElement("div");el.className="stop"+(completed.has(s.id)?" done":"");
- el.innerHTML=`<div class="stop-left"><div class="num">${s.id}</div><div><b>${s.name}</b><br><small>± 1 minuut verhaal</small></div></div><button data-id="${s.id}">▶</button>`;
- el.querySelector("button").onclick=()=>speak(s);list.appendChild(el)});
-}
-document.getElementById("startBtn").onclick=()=>{
- try{audioCtx=new (window.AudioContext||window.webkitAudioContext)();audioCtx.resume()}catch(e){}
- if(!navigator.geolocation){alert("Deze browser ondersteunt geen GPS.");return}
- if(watchId!==null)navigator.geolocation.clearWatch(watchId);
- watchId=navigator.geolocation.watchPosition(updatePosition,e=>document.getElementById("status").textContent="GPS-fout: "+e.message,{enableHighAccuracy:true,maximumAge:3000,timeout:15000});
- document.getElementById("startBtn").textContent="GPS actief";
-};
-document.getElementById("playBtn").onclick=()=>{if(currentStop)speak(currentStop)};
-document.getElementById("stopSpeak").onclick=()=>speechSynthesis?.cancel();
-document.getElementById("resetBtn").onclick=()=>{completed.clear();notified.clear();save();document.getElementById("arrival").style.display="none";document.getElementById("practical").style.display="none";document.getElementById("playBtn").style.display="none";render()};
-render();
-if("serviceWorker" in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
-</script>
-</body></html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0f172a"><title>Middelburg Audiotour</title><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f4f5f7;color:#111827}header{padding:12px 14px;background:#0f172a;color:white}.top{display:flex;align-items:center;justify-content:space-between;gap:10px}h1{font-size:1.15rem;margin:0}.pill{background:#334155;padding:6px 9px;border-radius:999px;font-size:.82rem}#map{height:46vh;min-height:330px;width:100%;background:#ddd}.panel{padding:12px;max-width:850px;margin:auto}.next{background:white;border-radius:16px;padding:15px;box-shadow:0 2px 10px #0001;margin-top:-28px;position:relative;z-index:500}.eyebrow{text-transform:uppercase;letter-spacing:.06em;font-size:.72rem;color:#64748b;font-weight:700}.next h2{margin:4px 0 8px;font-size:1.35rem}.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.metric{background:#f1f5f9;border-radius:10px;padding:9px}.metric b{display:block}.metric span,.status,.stop small{font-size:.78rem;color:#64748b}.progress{height:8px;background:#e2e8f0;border-radius:999px;overflow:hidden;margin:12px 0}.bar{height:100%;background:#0f172a;width:0}.notice{margin:10px 0;padding:12px;border-radius:12px;background:#fff7ed;display:none}button{border:0;border-radius:11px;padding:12px 14px;font-size:1rem;font-weight:650;background:#0f172a;color:white}button.secondary{background:#e2e8f0;color:#111827}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.status{margin-top:8px}.practical{margin-top:12px;background:#ecfdf5;border-radius:12px;padding:12px;display:none}.list{margin-top:14px}.stop{background:white;border-radius:12px;padding:12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:12px}.stop.done{opacity:.55}.num{width:30px;height:30px;border-radius:50%;background:#e2e8f0;display:grid;place-items:center;font-weight:700;flex:0 0 auto}.stop-left{display:flex;align-items:center;gap:10px;min-width:0}.stop button{padding:8px 10px;font-size:.85rem}</style></head><body><header><div class="top"><h1>Middelburg Audiotour</h1><div class="pill" id="progressTop">0 / 12</div></div></header><div id="map"></div><main class="panel"><section class="next"><div class="eyebrow">Volgende stop</div><h2 id="nextName">Start de tour</h2><div class="metrics"><div class="metric"><b id="distance">—</b><span>afstand</span></div><div class="metric"><b id="walkTime">—</b><span>looptijd</span></div><div class="metric"><b id="accuracy">—</b><span>GPS</span></div></div><div class="progress"><div class="bar" id="bar"></div></div><div id="arrival" class="notice"><b id="arrivalTitle">Je bent bij een stop</b><div>Tik op Voorlezen als de groep klaar is om te luisteren.</div></div><div id="practical" class="practical"></div><div class="actions"><button id="startBtn">Start tour</button><button id="playBtn" style="display:none">▶ Voorlezen</button><button id="stopSpeak" class="secondary">Stop audio</button><button id="resetBtn" class="secondary">Reset</button></div><div class="status" id="status">GPS staat uit. Sta locatiegebruik toe wanneer je de tour start.</div></section><section class="list" id="list"></section></main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="stops.js"></script><script>
+const TRIGGER=60,WALK_MPS=1.15;let watchId=null,position=null,currentStop=null,notified=new Set(JSON.parse(localStorage.getItem('notified')||'[]')),completed=new Set(JSON.parse(localStorage.getItem('completed')||'[]')),audioCtx=null,userMarker=null,accuracyCircle=null,voices=[];
+function loadVoices(){voices=speechSynthesis.getVoices()}if('speechSynthesis'in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices}
+function bestDutchVoice(){loadVoices();const nl=voices.filter(v=>(v.lang||'').toLowerCase().startsWith('nl'));if(!nl.length)return null;const preferred=['xander','claire','ellen','flemish','dutch','nederlands','google nederlands','microsoft maarten','microsoft colette','microsoft frank'];for(const p of preferred){const v=nl.find(x=>x.name.toLowerCase().includes(p));if(v)return v}return nl.find(v=>v.localService)||nl[0]}
+const map=L.map('map',{zoomControl:true}).setView([51.5,3.615],15);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);L.polyline(ROUTE,{weight:5,opacity:.72}).addTo(map);STOPS.forEach(s=>L.marker([s.lat,s.lon]).addTo(map).bindTooltip(`${s.id}. ${s.name}`));map.fitBounds(L.latLngBounds(ROUTE).pad(.12));
+function dist(a,b,c,d){const R=6371000,p1=a*Math.PI/180,p2=c*Math.PI/180,dp=(c-a)*Math.PI/180,dl=(d-b)*Math.PI/180,q=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}function fmtDist(m){return m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(1)} km`}function fmtTime(m){return `± ${Math.max(1,Math.round(m/WALK_MPS/60))} min`}function save(){localStorage.setItem('notified',JSON.stringify([...notified]));localStorage.setItem('completed',JSON.stringify([...completed]))}function nextUncompleted(){return STOPS.find(s=>!completed.has(s.id))||STOPS[STOPS.length-1]}
+function beep(){try{audioCtx=audioCtx||new(AudioContext||webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.18)}catch(e){}if(navigator.vibrate)navigator.vibrate([180,90,180])}
+function naturalText(t){return t.replace(/([.!?])\s+/g,'$1  ').replace(/:/g,': ').replace(/;/g,'; ')}
+function speak(stop){if(!('speechSynthesis'in window)){alert('Voorlezen wordt niet ondersteund op deze browser.');return}speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(naturalText(stop.text)),v=bestDutchVoice();u.lang='nl-NL';if(v)u.voice=v;u.rate=.88;u.pitch=1.02;u.volume=1;u.onend=()=>{completed.add(stop.id);save();document.getElementById('arrival').style.display='none';showPractical(stop.id);render()};setTimeout(()=>speechSynthesis.speak(u),80)}
+function showPractical(id){const p=PRACTICAL.find(x=>x.after===id),el=document.getElementById('practical');if(!p){el.style.display='none';return}el.innerHTML=`<b>${p.type}: ${p.title}</b><div>${p.text}</div>`;el.style.display='block'}
+function updatePosition(pos){position=pos.coords;if(userMarker)map.removeLayer(userMarker);if(accuracyCircle)map.removeLayer(accuracyCircle);userMarker=L.circleMarker([position.latitude,position.longitude],{radius:8,weight:3}).addTo(map).bindTooltip('Jij bent hier');accuracyCircle=L.circle([position.latitude,position.longitude],{radius:position.accuracy,weight:1,opacity:.3,fillOpacity:.05}).addTo(map);const next=nextUncompleted();currentStop=next;const d=dist(position.latitude,position.longitude,next.lat,next.lon);nextName.textContent=`${next.id}. ${next.name}`;distance.textContent=fmtDist(d);walkTime.textContent=fmtTime(d);accuracy.textContent=`± ${Math.round(position.accuracy)} m`;status.textContent='GPS actief. Je krijgt eerst een geluid en trilling wanneer je bij de volgende stop bent.';if(d<=TRIGGER&&!notified.has(next.id)){notified.add(next.id);save();beep();arrivalTitle.textContent=`Je bent bij stop ${next.id}: ${next.name}`;arrival.style.display='block';playBtn.style.display='inline-block'}render()}
+function render(){const done=completed.size;bar.style.width=Math.min(100,done/STOPS.length*100)+'%';progressTop.textContent=`${done} / ${STOPS.length}`;const next=nextUncompleted();if(!position)nextName.textContent=done===STOPS.length?'Tour voltooid':`${next.id}. ${next.name}`;list.innerHTML='';STOPS.forEach(s=>{const el=document.createElement('div');el.className='stop'+(completed.has(s.id)?' done':'');el.innerHTML=`<div class="stop-left"><div class="num">${s.id}</div><div><b>${s.name}</b><br><small>± 1 minuut verhaal</small></div></div><button>▶</button>`;el.querySelector('button').onclick=()=>speak(s);list.appendChild(el)})}
+startBtn.onclick=()=>{try{audioCtx=new(AudioContext||webkitAudioContext)();audioCtx.resume()}catch(e){}if(!navigator.geolocation){alert('Deze browser ondersteunt geen GPS.');return}if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=navigator.geolocation.watchPosition(updatePosition,e=>status.textContent='GPS-fout: '+e.message,{enableHighAccuracy:true,maximumAge:3000,timeout:15000});startBtn.textContent='GPS actief'};playBtn.onclick=()=>{if(currentStop)speak(currentStop)};stopSpeak.onclick=()=>speechSynthesis?.cancel();resetBtn.onclick=()=>{completed.clear();notified.clear();save();arrival.style.display='none';practical.style.display='none';playBtn.style.display='none';render()};render();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script></body></html>

@@ -1,0 +1,10 @@
+{
+  "name": "Mijn Balans",
+  "short_name": "Balans",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f3ee",
+  "theme_color": "#f7f3ee",
+  "description": "Persoonlijke tracker voor gewicht, voeding, cyclus en beweging"
+}
